@@ -1408,13 +1408,147 @@
 
     state.customRuns += 1;
     saveState();
-    renderBuilderResults();
+    renderBuilderResults(mode);
     updateTelemetry(true);
     sim.startedAt = performance.now();
     sim.raf = window.requestAnimationFrame(labFrame);
   }
 
-  function renderBuilderResults() {
+  /* ------------------------------------------------------------------
+     Results timeline — display only.
+     Bar position/length are derived from the same numbers the table and
+     the summary cards already use; no experiment maths is changed here.
+     ------------------------------------------------------------------ */
+
+  var RESULT_BAR_MIN = 44;   /* px — shortest readable bar */
+  var RESULT_TICKS = 6;      /* target number of timeline intervals */
+
+  /* Round a raw interval up to a readable scale step (1 / 2 / 5 × 10ⁿ). */
+  function resultTickStep(span, maxTicks) {
+    var raw = Math.max(span, 0.1) / maxTicks;
+    var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    var options = [1, 2, 5, 10];
+    var step = 10 * mag;
+    for (var i = 0; i < options.length; i++) {
+      if (span / (options[i] * mag) <= maxTicks) { step = options[i] * mag; break; }
+    }
+    return Math.max(step, 0.1);
+  }
+
+  function resultLabel(value) {
+    var rounded = Math.round(value * 100) / 100;
+    var text = Math.abs(rounded - Math.round(rounded)) < 0.005
+      ? String(Math.round(rounded))
+      : rounded.toFixed(2).replace(/0$/, "");
+    return text + "s";
+  }
+
+  function updateResultsHint() {
+    var viewport = $("#resTlViewport");
+    var hint = $("#resTlHint");
+    if (!viewport || !hint) { return; }
+    var scrollable = viewport.scrollWidth - viewport.clientWidth > 4;
+    hint.classList.toggle("is-on", scrollable);
+  }
+
+  function renderResultsTimeline(rows, mode) {
+    var viewport = $("#resTlViewport");
+    var canvas = $("#resTlCanvas");
+    if (!viewport || !canvas) { return; }
+
+    var sequential = mode === "sequential";
+    var span = sequential
+      ? rows.reduce(function (acc, row) { return acc + row.dur; }, 0)
+      : rows.reduce(function (acc, row) { return Math.max(acc, row.dur); }, 0);
+    span = Math.max(span, 0.1);
+
+    var step = resultTickStep(span, RESULT_TICKS);
+    /* the axis ends exactly at the total time, bars are scaled to it */
+    var axisMax = span;
+    var tickCount = Math.floor((axisMax + 1e-9) / step);
+
+    canvas.innerHTML = "";
+    canvas.style.setProperty("--tick", ((step / axisMax) * 100).toFixed(4) + "%");
+    viewport.scrollLeft = 0;
+
+    /* ---- time scale row ---- */
+    var scale = document.createElement("div");
+    scale.className = "res-scale";
+
+    var scaleTask = document.createElement("div");
+    scaleTask.className = "res-scale-task";
+    scaleTask.textContent = "Task";
+
+    var scaleTrack = document.createElement("div");
+    scaleTrack.className = "res-scale-track";
+    for (var t = 0; t <= tickCount; t++) {
+      var value = Math.round(step * t * 1000) / 1000;
+      var tick = document.createElement("span");
+      tick.className = "res-tick";
+      tick.style.left = ((value / axisMax) * 100).toFixed(3) + "%";
+      tick.textContent = resultLabel(value);
+      scaleTrack.appendChild(tick);
+    }
+
+    scale.appendChild(scaleTask);
+    scale.appendChild(scaleTrack);
+    canvas.appendChild(scale);
+
+    /* ---- one row per task: name column + timeline track ---- */
+    rows.forEach(function (row) {
+      var start = sequential ? row.seqStart : 0;
+      var end = start + row.dur;
+
+      var rowEl = document.createElement("div");
+      rowEl.className = "res-row";
+
+      var task = document.createElement("div");
+      task.className = "res-task";
+
+      var name = document.createElement("span");
+      name.className = "res-task-name";
+      name.textContent = row.name;
+
+      var meta = document.createElement("span");
+      meta.className = "res-task-meta";
+      meta.textContent = oneDecimal(start) + "s \u2192 " + oneDecimal(end) + "s";
+
+      var dur = document.createElement("span");
+      dur.className = "res-task-dur";
+      dur.textContent = "Duration: " + oneDecimal(row.dur) + "s";
+
+      task.appendChild(name);
+      task.appendChild(meta);
+      task.appendChild(dur);
+
+      var track = document.createElement("div");
+      track.className = "res-track";
+
+      var bar = document.createElement("span");
+      bar.className = "res-bar";
+      bar.textContent = oneDecimal(row.dur) + "s";
+      bar.title = row.name + " \u00b7 " + oneDecimal(start) + "s \u2192 " + oneDecimal(end) + "s";
+      /* Position from the time scale; keep a usable minimum width so short
+         tasks never collapse into an unreadable sliver. */
+      bar.style.left = "min(" + ((start / axisMax) * 100).toFixed(3) +
+        "%, calc(100% - " + RESULT_BAR_MIN + "px))";
+      bar.style.width = "max(" + RESULT_BAR_MIN + "px, " +
+        ((row.dur / axisMax) * 100).toFixed(3) + "%)";
+      track.appendChild(bar);
+
+      rowEl.appendChild(task);
+      rowEl.appendChild(track);
+      canvas.appendChild(rowEl);
+    });
+
+    setText("#resTlCaption",
+      (sequential ? "Sequential" : "Concurrent") + " schedule \u00b7 " +
+      rows.length + (rows.length === 1 ? " task" : " tasks"));
+
+    updateResultsHint();
+  }
+
+  function renderBuilderResults(mode) {
     var cursor = 0;
     var rows = builderTasks.map(function (task) {
       var start = cursor;
@@ -1426,6 +1560,7 @@
 
     var body = $("#builderRows");
     body.innerHTML = "";
+    var heads = ["Task", "Duration", "Concurrent", "Sequential"];
     rows.forEach(function (row) {
       var tr = document.createElement("tr");
       var cells = [
@@ -1436,7 +1571,11 @@
       ];
       cells.forEach(function (text, i) {
         var td = document.createElement("td");
-        if (i > 0) { td.className = "num"; }
+        if (i > 0) {
+          /* scoped numeric cell — never reuse the numbered-list badge class */
+          td.className = "cell-num";
+          td.setAttribute("data-label", heads[i]);
+        }
         td.textContent = text;
         tr.appendChild(td);
       });
@@ -1447,6 +1586,8 @@
     setText("#builderSeq", oneDecimal(seq) + "s");
     setText("#builderWork", oneDecimal(seq) + "s");
     $("#builderResults").hidden = false;
+    renderResultsTimeline(rows, mode || radioValue("labMode") || "concurrent");
+    updateResultsHint();
   }
 
   function initBuilder() {
@@ -1460,6 +1601,13 @@
       if (last) { $(".b-name", last).focus(); }
     });
     $("#builderRun").addEventListener("click", runCustomExperiment);
+
+    /* the swipe hint only applies while the timeline can actually scroll */
+    var hintTimer = null;
+    window.addEventListener("resize", function () {
+      window.clearTimeout(hintTimer);
+      hintTimer = window.setTimeout(updateResultsHint, 150);
+    });
 
     $$("#presetList .preset").forEach(function (btn) {
       btn.addEventListener("click", function () { loadPreset(btn.getAttribute("data-preset")); });

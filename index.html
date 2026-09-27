@@ -1026,6 +1026,19 @@ print("All workers completed")</pre>
 
             <div class="builder-results" id="builderResults" hidden>
               <p class="kicker">Experiment results</p>
+
+              <!-- Responsive timeline: fixed task-name column + scrollable timeline canvas -->
+              <div class="res-tl">
+                <div class="res-tl-head">
+                  <p class="res-tl-caption" id="resTlCaption">Concurrent schedule</p>
+                  <p class="res-tl-hint" id="resTlHint">Swipe horizontally to view full timeline</p>
+                </div>
+                <div class="res-tl-viewport" id="resTlViewport" tabindex="0" role="region"
+                     aria-label="Task execution timeline, scrollable">
+                  <div class="res-tl-canvas" id="resTlCanvas"></div>
+                </div>
+              </div>
+
               <div class="table-scroll">
                 <table class="rows-table rows-table--tight">
                   <thead><tr><th scope="col">Task</th><th scope="col">Duration</th><th scope="col">Concurrent</th><th scope="col">Sequential</th></tr></thead>
@@ -1465,7 +1478,7 @@ print("All workers completed")</pre>
 
   <footer class="foot">
     <p><strong>CONCURRA</strong> · Interactive Concurrency Lab</p>
-    <p>Yellow-green and white · Runs entirely in your browser · Built for learning operating systems</p>
+    <p>Built for learning operating systems</p>
   </footer>
 </div>
 
